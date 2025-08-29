@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <title>میم‌کوین‌ها - نسخه آنلاین</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial; text-align:center; margin:10px; }
+        #settings { margin-bottom:20px; text-align:left; display:inline-block; }
+        #settings input { width:80px; margin-right:10px; }
+        #coins-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .coin-card {
+            border:2px solid #333;
+            border-radius:10px;
+            padding:15px;
+            margin:10px;
+            width:90%;
+            max-width:220px;
+            background-color:#f0f0f0;
+            box-sizing: border-box;
+        }
+        .price { font-size:18px; font-weight:bold; margin-top:5px; }
+        .alert { color:red; font-weight:bold; }
+        .good { color:green; font-weight:bold; }
+        .medium { color:orange; font-weight:bold; }
+        .low { color:red; font-weight:bold; }
+    </style>
+</head>
+<body>
+    <h1>میم‌کوین‌ها - نسخه آنلاین</h1>
+
+    <div id="settings">
+        <h3>تنظیم معیارها</h3>
+        <label>تعداد کوین‌ها: <input type="number" id="numCoins" value="50"></label><br><br>
+        <label>حداقل حجم معاملات (USD): <input type="number" id="minVolume" value="50000"></label><br><br>
+        <label>حداکثر مارکت کپ (USD): <input type="number" id="maxMarketCap" value="10000000"></label><br><br>
+        <label>حداکثر قیمت کوین (USD): <input type="number" id="maxPrice" value="0.01" step="0.0001"></label><br><br>
+        <label>درصد تغییر هشدار 24h: <input type="number" id="changePercent" value="10"></label><br><br>
+        <label>زمان بروزرسانی (ثانیه): <input type="number" id="updateInterval" value="15"></label><br><br>
+        <button onclick="updateSettings()">اعمال تنظیمات</button>
+    </div>
+
+    <div id="coins-container"></div>
+
+    <script>
+        let coins = [];
+        let settings = {
+            numCoins: 50,
+            minVolume: 50000,
+            maxMarketCap: 10000000,
+            maxPrice: 0.01,
+            changePercent: 10,
+            updateInterval: 15000
+        };
+        let intervalId;
+
+        function updateSettings() {
+            settings.numCoins = parseInt(document.getElementById('numCoins').value);
+            settings.minVolume = parseFloat(document.getElementById('minVolume').value);
+            settings.maxMarketCap = parseFloat(document.getElementById('maxMarketCap').value);
+            settings.maxPrice = parseFloat(document.getElementById('maxPrice').value);
+            settings.changePercent = parseFloat(document.getElementById('changePercent').value);
+            settings.updateInterval = parseInt(document.getElementById('updateInterval').value) * 1000;
+
+            clearInterval(intervalId);
+            fetchCoins();
+            intervalId = setInterval(fetchCoins, settings.updateInterval);
+        }
+
+        function computeValidity(coin) {
+            let score = 0;
+            if(coin.total_volume >= settings.minVolume) score++;
+            if(coin.market_cap <= settings.maxMarketCap) score++;
+            if(coin.current_price <= settings.maxPrice) score++;
+
+            // بررسی وجود حداقل یکی از صرافی‌های معتبر
+            let exchanges = coin.tickers ? [...new Set(coin.tickers.map(t => t.market.name))] : [];
+            let knownExchanges = ['Binance', 'KuCoin', 'Gate.io', 'Coinbase', 'OKX'];
+            if(exchanges.some(e => knownExchanges.includes(e))) score++;
+
+            if(score === 4) return {text:'خوب', className:'good'};
+            else if(score >= 2) return {text:'متوسط', className:'medium'};
+            else return {text:'کم', className:'low'};
+        }
+
+        async function fetchCoins() {
+            try {
+                // Proxy پایدار برای GitHub Pages
+                const proxy = 'https://thingproxy.freeboard.io/fetch/';
+                const url = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_asc&per_page=250&page=1&sparkline=false';
+                const res = await fetch(proxy + url);
+                let data = await res.json();
+
+                // فیلتر اولیه
+                data = data.filter(c => 
+                    c.total_volume >= settings.minVolume &&
+                    c.market_cap <= settings.maxMarketCap &&
+                    c.current_price <= settings.maxPrice
+                ).slice(0, settings.numCoins);
+
+                coins = data;
+                renderCoins();
+            } catch(e) {
+                console.error("خطا در دریافت داده‌ها:", e);
+                document.getElementById('coins-container').innerHTML = '<p>خطا در دریافت داده‌ها. دوباره تلاش کنید.</p>';
+            }
+        }
+
+        function renderCoins() {
+            const container = document.getElementById('coins-container');
+            container.innerHTML = '';
+            coins.forEach(coin => {
+                const card = document.createElement('div');
+                card.className = 'coin-card';
+
+                let alertMessage = '';
+                if (Math.abs(coin.price_change_percentage_24h) >= settings.changePercent) {
+                    alertMessage = `<div class="alert">⚠️ تغییر شدید ${coin.price_change_percentage_24h.toFixed(2)}%</div>`;
+                }
+
+                let exchanges = coin.tickers ? [...new Set(coin.tickers.map(t => t.market.name))].join(', ') : 'N/A';
+                let validity = computeValidity(coin);
+
+                card.innerHTML = `
+                    <h3>${coin.name} (${coin.symbol.toUpperCase()})</h3>
+                    <div class="price">$ ${coin.current_price}</div>
+                    <div>حجم معاملات 24h: $ ${coin.total_volume}</div>
+                    <div>مارکت کپ: $ ${coin.market_cap}</div>
+                    ${alertMessage}
+                    <div>صرافی‌ها: ${exchanges}</div>
+                    <div>اعتبار: <span class="${validity.className}">${validity.text}</span></div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        fetchCoins();
+        intervalId = setInterval(fetchCoins, settings.updateInterval);
+    </script>
+</body>
+</html>
